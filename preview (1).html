@@ -1,0 +1,1405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Interactive 3D BSn Graph</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<style>
+
+body{
+    margin:0;
+    overflow:hidden;
+    background:#020617;
+    font-family:Arial;
+}
+
+#panel{
+    position:absolute;
+    top:20px;
+    left:20px;
+    width:300px;
+    background:rgba(15,23,42,0.95);
+    padding:20px;
+    border-radius:20px;
+    color:white;
+    z-index:10;
+}
+
+h1{
+    color:#38bdf8;
+    font-size:24px;
+}
+
+p{
+    color:#cbd5e1;
+    font-size:14px;
+    line-height:1.5;
+}
+
+input{
+    width:100%;
+    margin-top:10px;
+    padding:10px;
+    border:none;
+    border-radius:10px;
+    background:#111827;
+    color:white;
+    box-sizing:border-box;
+}
+
+button{
+    width:100%;
+    margin-top:10px;
+    padding:12px;
+    border:none;
+    border-radius:10px;
+    font-weight:bold;
+    cursor:pointer;
+    color:white;
+}
+
+.build{
+    background:#22c55e;
+}
+
+.fail{
+    background:#ef4444;
+}
+
+.restore{
+    background:#3b82f6;
+}
+
+.status{
+    margin-top:15px;
+    color:#facc15;
+    font-size:14px;
+    line-height:1.5;
+}
+
+.details{
+    margin-top:10px;
+    color:#cbd5e1;
+    font-size:12px;
+    line-height:1.45;
+    white-space:pre-line;
+}
+
+</style>
+</head>
+
+<body>
+
+<div id="panel">
+
+    <h1>3D BSn Graph</h1>
+
+    <p>
+        Interactive visualization for Bubble-Sort Star Graph BSn.
+        Input graph dimension n (recommended 2-6).
+        Scroll to rotate, hold Alt while scrolling to zoom.
+    </p>
+
+    <input type="number" id="nodeInput" value="4" min="2" max="6">
+
+    <button class="build" onclick="buildGraph()">
+        Build Graph
+    </button>
+
+    <div style="margin-top:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <label style="font-size:14px; color:#cbd5e1;">
+            <input type="radio" name="selectionMode" value="node" checked onchange="setSelectionMode('node')"> Select Node
+        </label>
+        <label style="font-size:14px; color:#cbd5e1;">
+            <input type="radio" name="selectionMode" value="edge" onchange="setSelectionMode('edge')"> Select Edge
+        </label>
+    </div>
+
+    <button class="fail" onclick="attackSelected()">
+        Attack Selected
+    </button>
+
+    <button class="fail" onclick="subvertNode()">
+        Simulate Failure
+    </button>
+
+    <button class="fail" onclick="applyMinimumEdgeCut()">
+        Apply Minimum Edge Cut
+    </button>
+
+    <button class="restore" onclick="restoreGraph()">
+        Restore Network
+    </button>
+
+    <div class="status" id="status">
+        Status : Ready
+    </div>
+
+    <div class="details" id="details"></div>
+    <div class="details" id="selectionInfo"></div>
+
+</div>
+
+<script>
+
+// Reference implementation for the math/proof logic:
+// see sibling file bsn_logic.py
+
+let scene, camera, renderer;
+
+let nodes = [];
+let edges = [];
+let graphData = null;
+let lastFailure = null;
+let selectedItem = null;
+let selectionMode = "node";
+
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+let targetRotationX = 0;
+let targetRotationY = 0;
+
+let currentRotationX = 0;
+let currentRotationY = 0;
+
+init();
+animate();
+
+function init(){
+
+    scene = new THREE.Scene();
+
+    camera = new THREE.PerspectiveCamera(
+        75,
+        window.innerWidth/window.innerHeight,
+        0.1,
+        1000
+    );
+
+    camera.position.z = 40;
+
+    renderer = new THREE.WebGLRenderer({
+        antialias:true
+    });
+
+    renderer.setSize(
+        window.innerWidth,
+        window.innerHeight
+    );
+
+    document.body.appendChild(renderer.domElement);
+
+    const ambientLight =
+        new THREE.AmbientLight(0xffffff,0.8);
+
+    scene.add(ambientLight);
+
+    const pointLight =
+        new THREE.PointLight(0xffffff,1);
+
+    pointLight.position.set(20,20,20);
+
+    scene.add(pointLight);
+
+    document.addEventListener("wheel",(event)=>{
+
+        event.preventDefault();
+
+        if(event.altKey){
+
+            camera.position.z += event.deltaY * 0.02;
+
+            if(camera.position.z < 10){
+                camera.position.z = 10;
+            }
+
+            if(camera.position.z > 100){
+                camera.position.z = 100;
+            }
+
+            return;
+        }
+
+        targetRotationY += event.deltaY * 0.005;
+        targetRotationX += event.deltaX * 0.005;
+
+        if(event.shiftKey){
+            targetRotationX += event.deltaY * 0.005;
+        }
+
+    },{passive:false});
+
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+
+    buildGraph();
+}
+
+function buildGraph(){
+
+    clearGraph();
+
+    const input =
+        document.getElementById("nodeInput");
+
+    const requestedN =
+        parseInt(input.value,10);
+
+    const n =
+        Number.isFinite(requestedN)
+            ? Math.max(2,Math.min(6,requestedN))
+            : 4;
+
+    input.value = n;
+
+    graphData = buildBSnData(n);
+
+    const totalNodes =
+        graphData.vertices.length;
+
+    const radius =
+        Math.max(12,Math.min(26,10 + Math.cbrt(totalNodes) * 5));
+
+    for(let i=0;i<totalNodes;i++){
+
+        const geometry =
+            new THREE.SphereGeometry(0.6,24,24);
+
+        const material =
+            new THREE.MeshStandardMaterial({
+                color:0x3b82f6,
+                emissive:0x1e40af
+            });
+
+        const sphere =
+            new THREE.Mesh(geometry,material);
+
+        const phi =
+            Math.acos(1 - (2 * (i + 0.5)) / totalNodes);
+
+        const theta =
+            Math.PI * (1 + Math.sqrt(5)) * (i + 0.5);
+
+        sphere.position.x =
+            radius * Math.cos(theta) * Math.sin(phi);
+
+        sphere.position.y =
+            radius * Math.sin(theta) * Math.sin(phi);
+
+        sphere.position.z =
+            radius * Math.cos(phi);
+
+        sphere.userData.index = i;
+        sphere.userData.label = formatPermutation(graphData.vertices[i]);
+        sphere.userData.code = graphData.vertices[i].join("");
+
+        const nodeLabel =
+            createNodeLabel(
+                sphere.userData.code,
+                totalNodes
+            );
+
+        nodeLabel.position.set(0,1.15,0);
+        sphere.add(nodeLabel);
+
+        scene.add(sphere);
+
+        nodes.push(sphere);
+    }
+
+    graphData.edges.forEach((edge)=>{
+        connectNodes(edge.a,edge.b,edge.type);
+    });
+
+    graphData.bruteForceResult =
+        graphData.n <= 5
+            ? computeKappaNB(graphData)
+            : null;
+
+    graphData.bruteForceEdgeResult =
+        graphData.n <= 5
+            ? computeLambdaNB(graphData)
+            : null;
+
+    graphData.theoremCutSet =
+        buildTheoremCutSet(graphData);
+
+    lastFailure = null;
+
+    updateBuildDetails();
+}
+
+function buildBSnData(n){
+
+    const vertices =
+        generatePermutations(
+            Array.from({length:n},(_,index)=>index + 1)
+        );
+
+    const vertexIndex =
+        new Map(
+            vertices.map((vertex,index)=>[
+                vertex.join(","),
+                index
+            ])
+        );
+
+    const adjacency =
+        Array.from(
+            {length:vertices.length},
+            ()=>new Set()
+        );
+
+    const edgeMap = new Map();
+
+    function addEdge(a,b,type){
+
+        const left = Math.min(a,b);
+        const right = Math.max(a,b);
+        const key = left + "-" + right;
+
+        if(edgeMap.has(key)){
+            return;
+        }
+
+        adjacency[a].add(b);
+        adjacency[b].add(a);
+
+        edgeMap.set(key,{
+            a:left,
+            b:right,
+            type
+        });
+    }
+
+    vertices.forEach((vertex,index)=>{
+
+        for(let i=1;i<n-1;i++){
+            const swapped =
+                applyTransposition(vertex,i,i+1);
+
+            addEdge(
+                index,
+                vertexIndex.get(swapped.join(",")),
+                "bubble"
+            );
+        }
+
+        for(let i=1;i<n;i++){
+            const swapped =
+                applyTransposition(vertex,0,i);
+
+            addEdge(
+                index,
+                vertexIndex.get(swapped.join(",")),
+                "star"
+            );
+        }
+    });
+
+    return {
+        n,
+        vertices,
+        vertexIndex,
+        adjacency,
+        edges:[...edgeMap.values()],
+        vertexCount:vertices.length,
+        edgeCount:edgeMap.size,
+        degree:(2 * n) - 3,
+        classicalConnectivity:(2 * n) - 3,
+        theoreticalKappaNB:Math.floor((3 * n - 2) / 4),
+        theoreticalLambdaNB:(2 * n) - 3
+    };
+}
+
+function buildTheoremCutSet(data){
+
+    if(data.n < 4){
+        return null;
+    }
+
+    const x =
+        Array.from({length:data.n},(_,index)=>index + 1);
+
+    const cutSet = [];
+    const seen = new Set();
+
+    function addVertexFromOps(operations){
+
+        let vertex = x.slice();
+
+        operations.forEach(([left,right])=>{
+            vertex = applyTransposition(
+                vertex,
+                left - 1,
+                right - 1
+            );
+        });
+
+        const key = vertex.join(",");
+
+        if(seen.has(key)){
+            return;
+        }
+
+        seen.add(key);
+        cutSet.push(data.vertexIndex.get(key));
+    }
+
+    for(let i=2;i<=data.n - 1;i+=2){
+        addVertexFromOps([
+            [1,i],
+            [1,i + 1]
+        ]);
+    }
+
+    let pairEnd;
+
+    switch(data.n % 4){
+        case 0:
+            pairEnd = data.n - 5;
+            break;
+        case 1:
+            pairEnd = data.n - 6;
+            break;
+        case 2:
+            pairEnd = data.n - 3;
+            break;
+        default:
+            pairEnd = data.n - 4;
+            break;
+    }
+
+    for(let start=3;start<=pairEnd;start+=4){
+        addVertexFromOps([
+            [start,start + 1],
+            [start + 2,start + 3]
+        ]);
+    }
+
+    if(data.n % 4 === 0 || data.n % 4 === 2){
+        addVertexFromOps([
+            [1,data.n],
+            [data.n - 1,data.n]
+        ]);
+    }else if(data.n % 4 === 1){
+        addVertexFromOps([
+            [data.n - 2,data.n - 1],
+            [data.n - 1,data.n]
+        ]);
+    }
+
+    return cutSet;
+}
+
+function createNodeLabel(text,totalNodes){
+
+    const canvas =
+        document.createElement("canvas");
+
+    canvas.width = 128;
+    canvas.height = 128;
+
+    const context =
+        canvas.getContext("2d");
+
+    context.clearRect(0,0,canvas.width,canvas.height);
+    context.fillStyle = "rgba(2,6,23,0.85)";
+    context.beginPath();
+    context.arc(64,64,38,0,Math.PI * 2);
+    context.fill();
+
+    context.strokeStyle = "rgba(148,163,184,0.9)";
+    context.lineWidth = 4;
+    context.stroke();
+
+    context.fillStyle = "#f8fafc";
+    context.font =
+        totalNodes > 200
+            ? "bold 24px Arial"
+            : "bold 28px Arial";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(text,64,66);
+
+    const texture =
+        new THREE.CanvasTexture(canvas);
+
+    texture.needsUpdate = true;
+
+    const material =
+        new THREE.SpriteMaterial({
+            map:texture,
+            transparent:true,
+            depthWrite:false
+        });
+
+    const sprite =
+        new THREE.Sprite(material);
+
+    const scale =
+        totalNodes > 200
+            ? 1.1
+            : 1.35;
+
+    sprite.scale.set(scale,scale,1);
+
+    return sprite;
+}
+
+function applyTransposition(vertex,left,right){
+
+    const swapped =
+        vertex.slice();
+
+    const temp =
+        swapped[left];
+
+    swapped[left] =
+        swapped[right];
+
+    swapped[right] =
+        temp;
+
+    return swapped;
+}
+
+function generatePermutations(values){
+
+    const result = [];
+
+    function backtrack(start){
+
+        if(start === values.length){
+            result.push(values.slice());
+            return;
+        }
+
+        for(let index=start;index<values.length;index++){
+            [values[start],values[index]] =
+                [values[index],values[start]];
+
+            backtrack(start + 1);
+
+            [values[start],values[index]] =
+                [values[index],values[start]];
+        }
+    }
+
+    backtrack(0);
+
+    return result;
+}
+
+function connectNodes(a,b,type){
+
+    const material =
+        new THREE.LineBasicMaterial({
+            color:type === "bubble" ? 0x22c55e : 0x14b8a6,
+            transparent:true,
+            opacity:0.9
+        });
+
+    const geometry =
+        new THREE.BufferGeometry().setFromPoints([
+            nodes[a].position.clone(),
+            nodes[b].position.clone()
+        ]);
+
+    const line =
+        new THREE.Line(geometry,material);
+
+    line.userData = {a,b,type};
+
+    scene.add(line);
+
+    edges.push(line);
+}
+
+function computeKappaNB(data){
+
+    const vertices =
+        Array.from(
+            {length:data.vertexCount},
+            (_,index)=>index
+        );
+
+    for(let k=1;k<=data.theoreticalKappaNB;k++){
+
+        let found = null;
+
+        forEachCombination(vertices,k,(subset)=>{
+
+            const removed =
+                getClosedNeighborhood(data.adjacency,subset);
+
+            const remaining =
+                vertices.filter(
+                    (index)=>!removed.has(index)
+                );
+
+            const analysis =
+                analyzeRemainingGraph(data.adjacency,remaining);
+
+            if(analysis.ok){
+                found = {
+                    k,
+                    cutSet:subset.slice(),
+                    removed,
+                    remaining,
+                    reason:analysis.reason
+                };
+                return true;
+            }
+
+            return false;
+        });
+
+        if(found){
+            return found;
+        }
+    }
+
+    return null;
+}
+
+// Compute exact edge connectivity (lambda) by brute force for small n (<=5)
+function computeLambdaNB(data){
+
+    if(data.n > 5){
+        return null;
+    }
+
+    const vertices = Array.from({length:data.vertexCount},(_,i)=>i);
+
+    // edges are objects {a,b,type} in data.edges
+    const edges = data.edges.map(e=>[e.a,e.b]);
+
+    for(let k=1;k<=data.theoreticalLambdaNB;k++){
+
+        let found = null;
+
+        forEachCombination(edges,k,(subset)=>{
+
+            // clone adjacency
+            const newAdj = data.adjacency.map(s=>new Set(s));
+
+            subset.forEach(([a,b])=>{
+                newAdj[a].delete(b);
+                newAdj[b].delete(a);
+            });
+
+            const analysis = analyzeRemainingGraph(newAdj,vertices);
+
+            if(analysis.ok){
+                found = {
+                    k,
+                    cutEdges: subset.map(e=>[e[0],e[1]]),
+                    reason: analysis.reason
+                };
+                return true;
+            }
+
+            return false;
+        });
+
+        if(found){
+            return found;
+        }
+    }
+
+    return null;
+}
+
+function forEachCombination(values,size,callback){
+
+    const combination = [];
+
+    function walk(startIndex){
+
+        if(combination.length === size){
+            return callback(combination);
+        }
+
+        for(
+            let index=startIndex;
+            index<=values.length - (size - combination.length);
+            index++
+        ){
+            combination.push(values[index]);
+
+            if(walk(index + 1)){
+                return true;
+            }
+
+            combination.pop();
+        }
+
+        return false;
+    }
+
+    return walk(0);
+}
+
+function getClosedNeighborhood(adjacency,seedSet){
+
+    const removed =
+        new Set(seedSet);
+
+    seedSet.forEach((index)=>{
+        adjacency[index].forEach((neighbor)=>{
+            removed.add(neighbor);
+        });
+    });
+
+    return removed;
+}
+
+function analyzeRemainingGraph(adjacency,remaining){
+
+    if(remaining.length === 0){
+        return {
+            ok:true,
+            reason:"empty"
+        };
+    }
+
+    const remainingSet =
+        new Set(remaining);
+
+    let isComplete = true;
+
+    for(const index of remaining){
+
+        let degree = 0;
+
+        adjacency[index].forEach((neighbor)=>{
+            if(remainingSet.has(neighbor)){
+                degree++;
+            }
+        });
+
+        if(degree !== remaining.length - 1){
+            isComplete = false;
+            break;
+        }
+    }
+
+    if(isComplete){
+        return {
+            ok:true,
+            reason:"complete"
+        };
+    }
+
+    const visited =
+        new Set();
+
+    let components = 0;
+
+    for(const start of remaining){
+
+        if(visited.has(start)){
+            continue;
+        }
+
+        components++;
+
+        const stack = [start];
+        visited.add(start);
+
+        while(stack.length > 0){
+            const current = stack.pop();
+
+            adjacency[current].forEach((neighbor)=>{
+                if(
+                    remainingSet.has(neighbor) &&
+                    !visited.has(neighbor)
+                ){
+                    visited.add(neighbor);
+                    stack.push(neighbor);
+                }
+            });
+        }
+    }
+
+    return {
+        ok:components > 1,
+        reason:components > 1 ? "disconnected" : "connected"
+    };
+}
+
+function getIsolatedVertices(adjacency,remaining){
+
+    const remainingSet =
+        new Set(remaining);
+
+    return remaining.filter((index)=>{
+
+        let degree = 0;
+
+        adjacency[index].forEach((neighbor)=>{
+            if(remainingSet.has(neighbor)){
+                degree++;
+            }
+        });
+
+        return degree === 0;
+    });
+}
+
+function subvertNode(){
+
+    if(!graphData || nodes.length === 0){
+        return;
+    }
+
+    if(graphData.bruteForceResult){
+        applyFailure(
+            graphData.theoremCutSet || graphData.bruteForceResult.cutSet,
+            true
+        );
+        return;
+    }
+
+    if(graphData.theoremCutSet){
+        applyFailure(graphData.theoremCutSet,true);
+        return;
+    }
+
+    const randomSeed =
+        Math.floor(Math.random() * graphData.vertexCount);
+
+    applyFailure([randomSeed],false);
+}
+
+function applyFailure(seedSet,useMinimumCut){
+
+    const removed =
+        getClosedNeighborhood(graphData.adjacency,seedSet);
+
+    const remaining =
+        Array.from(
+            {length:graphData.vertexCount},
+            (_,index)=>index
+        ).filter((index)=>!removed.has(index));
+
+    const analysis =
+        analyzeRemainingGraph(graphData.adjacency,remaining);
+
+    const isolatedVertices =
+        getIsolatedVertices(
+            graphData.adjacency,
+            remaining
+        );
+
+    lastFailure = {
+        seedSet:seedSet.slice(),
+        removed,
+        remaining,
+        isolatedVertices,
+        reason:analysis.reason
+    };
+
+    nodes.forEach((node,index)=>{
+
+        const isSeed =
+            seedSet.includes(index);
+
+        const isRemoved =
+            removed.has(index);
+
+        node.material.transparent = true;
+
+        if(isSeed){
+            node.material.color.set(0xef4444);
+            node.material.emissive.set(0x7f1d1d);
+            node.material.opacity = 1;
+            return;
+        }
+
+        if(isRemoved){
+            node.material.color.set(0xf97316);
+            node.material.emissive.set(0x7c2d12);
+            node.material.opacity = 0.55;
+            return;
+        }
+
+        if(isolatedVertices.includes(index)){
+            node.material.color.set(0xfacc15);
+            node.material.emissive.set(0xa16207);
+            node.material.opacity = 1;
+            return;
+        }
+
+        node.material.color.set(0x3b82f6);
+        node.material.emissive.set(0x1e40af);
+        node.material.opacity = 1;
+    });
+
+    edges.forEach((edge)=>{
+
+        const touchesFailure =
+            removed.has(edge.userData.a) ||
+            removed.has(edge.userData.b);
+
+        edge.material.transparent = true;
+
+        if(touchesFailure){
+            edge.material.color.set(0xef4444);
+            edge.material.opacity = 0.12;
+            return;
+        }
+
+        edge.material.color.set(
+            edge.userData.type === "bubble"
+                ? 0x22c55e
+                : 0x14b8a6
+        );
+        edge.material.opacity = 0.9;
+    });
+
+    const summary =
+        useMinimumCut
+            ? "Status : Minimum kNB cut applied"
+            : "Status : Demo subversion applied";
+
+    const details = [
+        "Seed set D : " + formatSeedSet(seedSet),
+        "Removed N[D] : " + removed.size + " vertex",
+        "Remaining graph : " + remaining.length + " vertex",
+        "Isolated node : " + formatSeedSet(isolatedVertices),
+        "Result : " + analysis.reason
+    ];
+
+    if(useMinimumCut){
+        if(graphData.bruteForceResult){
+            details.push(
+                "kNB exact : " +
+                graphData.bruteForceResult.k +
+                " (matches theorem)"
+            );
+        }
+
+        if(graphData.theoremCutSet){
+            details.push(
+                "Theorem cut |D| : " +
+                graphData.theoremCutSet.length +
+                " from Lemma 3.3"
+            );
+        }
+    }else{
+        details.push(
+            "Exact cut set is not computed for this n."
+        );
+    }
+
+    setStatus(summary,details);
+}
+
+function restoreGraph(){
+
+    if(!graphData){
+        return;
+    }
+
+    lastFailure = null;
+
+    nodes.forEach((node)=>{
+
+        node.material.color.set(0x3b82f6);
+        node.material.emissive.set(0x1e40af);
+        node.material.transparent = false;
+        node.material.opacity = 1;
+
+    });
+
+    edges.forEach((edge)=>{
+
+        edge.material.color.set(
+            edge.userData.type === "bubble"
+                ? 0x22c55e
+                : 0x14b8a6
+        );
+        edge.material.transparent = true;
+        edge.material.opacity = 0.9;
+
+    });
+
+    updateBuildDetails("Status : Network Restored");
+}
+
+function clearGraph(){
+
+    nodes.forEach((node)=>{
+        node.children.forEach((child)=>{
+            if(child.material && child.material.map){
+                child.material.map.dispose();
+            }
+            if(child.material){
+                child.material.dispose();
+            }
+        });
+        scene.remove(node);
+        node.geometry.dispose();
+        node.material.dispose();
+    });
+
+    edges.forEach((edge)=>{
+        scene.remove(edge);
+        edge.geometry.dispose();
+        edge.material.dispose();
+    });
+
+    nodes = [];
+    edges = [];
+    graphData = null;
+    lastFailure = null;
+    selectedItem = null;
+}
+
+function updateBuildDetails(
+    title = null
+){
+
+    if(!graphData){
+        setStatus("Status : Ready",[]);
+        return;
+    }
+
+    const details = [
+        "BS" + graphData.n +
+        " : " + graphData.vertexCount +
+        " vertex, " + graphData.edgeCount + " edge",
+        "Degree / k / lambda : " + graphData.degree,
+        "kNB theory : " + graphData.theoreticalKappaNB,
+        "lNB theory : " + graphData.theoreticalLambdaNB
+    ];
+
+    if(graphData.bruteForceResult){
+        details.push(
+            "kNB exact : " +
+            graphData.bruteForceResult.k +
+            " (" + graphData.bruteForceResult.reason + ")"
+        );
+        details.push(
+            "Exact cut set D : " +
+            formatSeedSet(graphData.bruteForceResult.cutSet)
+        );
+    }else{
+        details.push(
+            "kNB exact : enabled only up to n = 5"
+        );
+    }
+
+    if(graphData.bruteForceEdgeResult){
+        details.push(
+            "lNB exact : " +
+            graphData.bruteForceEdgeResult.k +
+            " (" + graphData.bruteForceEdgeResult.reason + ")"
+        );
+        details.push(
+            "Exact cut edges : " +
+            formatEdgeSet(graphData.bruteForceEdgeResult.cutEdges)
+        );
+    }else{
+        details.push(
+            "lNB exact : enabled only up to n = 5"
+        );
+    }
+
+    if(graphData.theoremCutSet){
+        details.push(
+            "Theorem cut |D| : " +
+            graphData.theoremCutSet.length
+        );
+        details.push(
+            "Theorem cut D : " +
+            formatSeedSet(graphData.theoremCutSet)
+        );
+    }
+
+    details.push(
+        "Ratio kNB/k : " +
+        (
+            graphData.theoreticalKappaNB /
+            graphData.classicalConnectivity
+        ).toFixed(3)
+    );
+
+    setStatus(
+        title || (
+            "Status : Graph Built (BS" +
+            graphData.n + ")"
+        ),
+        details
+    );
+    updateSelectionStatus();
+}
+
+function setSelectionMode(mode){
+    selectionMode = mode;
+    clearSelection();
+    updateSelectionStatus();
+}
+
+function onPointerDown(event){
+    if(!graphData){
+        return;
+    }
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    raycaster.params.Line.threshold = 0.2;
+
+    const nodeHits = raycaster.intersectObjects(nodes, false);
+    const edgeHits = raycaster.intersectObjects(edges, false);
+
+    if(selectionMode === "node" && nodeHits.length > 0){
+        selectItem({type: "node", index: nodeHits[0].object.userData.index});
+        return;
+    }
+
+    if(selectionMode === "edge" && edgeHits.length > 0){
+        selectItem({type: "edge", edge: edgeHits[0].object});
+        return;
+    }
+
+    clearSelection();
+}
+
+function selectItem(item){
+    if(selectedItem){
+        if(selectedItem.type === "node"){
+            restoreNodeVisual(selectedItem.index);
+        } else if(selectedItem.type === "edge"){
+            restoreEdgeVisual(selectedItem.edge);
+        }
+    }
+
+    selectedItem = item;
+
+    if(item.type === "node"){
+        highlightNode(item.index);
+    } else if(item.type === "edge"){
+        highlightEdge(item.edge);
+    }
+
+    updateSelectionStatus();
+}
+
+function clearSelection(){
+    if(!selectedItem){
+        return;
+    }
+
+    if(selectedItem.type === "node"){
+        restoreNodeVisual(selectedItem.index);
+    } else if(selectedItem.type === "edge"){
+        restoreEdgeVisual(selectedItem.edge);
+    }
+
+    selectedItem = null;
+    updateSelectionStatus();
+}
+
+function highlightNode(index){
+    const node = nodes[index];
+    node.material.color.set(0xfacc15);
+    node.material.emissive.set(0xb45309);
+    node.material.opacity = 1;
+}
+
+function restoreNodeVisual(index){
+    const node = nodes[index];
+    node.material.color.set(0x3b82f6);
+    node.material.emissive.set(0x1e40af);
+    node.material.opacity = 1;
+}
+
+function highlightEdge(edge){
+    edge.material.color.set(0xffd700);
+    edge.material.opacity = 1;
+}
+
+function restoreEdgeVisual(edge){
+    edge.material.color.set(
+        edge.userData.type === "bubble"
+            ? 0x22c55e
+            : 0x14b8a6
+    );
+    edge.material.opacity = 0.9;
+}
+
+function updateSelectionStatus(){
+    const selectionInfo = document.getElementById("selectionInfo");
+    let message = "Selection mode : " + selectionMode;
+
+    if(selectedItem){
+        if(selectedItem.type === "node"){
+            message += " | Node : " + formatPermutation(graphData.vertices[selectedItem.index]);
+        } else if(selectedItem.type === "edge"){
+            const a = selectedItem.edge.a;
+            const b = selectedItem.edge.b;
+            message += " | Edge : " + formatPermutation(graphData.vertices[a]) + " ↔ " + formatPermutation(graphData.vertices[b]);
+        }
+    } else {
+        message += " | Selected : none";
+    }
+
+    selectionInfo.textContent = message;
+}
+
+function attackSelected(){
+    if(!graphData){
+        return;
+    }
+
+    if(!selectedItem){
+        setStatus("Status : Select a node or edge first", [
+            "Please click a node or edge in the 3D graph to attack it."
+        ]);
+        return;
+    }
+
+    if(selectedItem.type === "node"){
+        applyFailure([selectedItem.index], false);
+        return;
+    }
+
+    if(selectedItem.type === "edge"){
+        applyFailure([selectedItem.edge.a, selectedItem.edge.b], false);
+        return;
+    }
+}
+
+function setStatus(message,details){
+
+    document.getElementById("status").textContent =
+        message;
+
+    document.getElementById("details").textContent =
+        details.join("\n");
+}
+
+function formatPermutation(vertex){
+
+    return "(" + vertex.join(",") + ")";
+}
+
+function formatSeedSet(seedSet){
+
+    if(!seedSet || seedSet.length === 0){
+        return "none";
+    }
+
+    return seedSet
+        .map((index)=>formatPermutation(graphData.vertices[index]))
+        .join(", ");
+}
+
+function formatEdgeSet(edgeSet){
+    if(!edgeSet || edgeSet.length === 0){
+        return "none";
+    }
+
+    return edgeSet.map(([a,b])=>{
+        return formatPermutation(graphData.vertices[a]) + " ↔ " + formatPermutation(graphData.vertices[b]);
+    }).join(", ");
+}
+
+function applyMinimumEdgeCut(){
+    if(!graphData){
+        return;
+    }
+
+    if(graphData.bruteForceEdgeResult){
+        applyEdgeFailure(graphData.bruteForceEdgeResult.cutEdges,true);
+        return;
+    }
+
+    setStatus("Status : Minimum edge cut not available",["Exact edge-cut enabled only up to n = 5"]);
+}
+
+function applyEdgeFailure(cutEdges,useMinimumCut){
+    if(!graphData){
+        return;
+    }
+
+    // mark edges that are in cutEdges as failed
+    const cutSet = new Set(cutEdges.map(e=>e[0] + ":" + e[1]));
+
+    edges.forEach((edgeObj)=>{
+        const a = edgeObj.userData.a;
+        const b = edgeObj.userData.b;
+        const key1 = a + ":" + b;
+        const key2 = b + ":" + a;
+
+        // Make cut edges visually prominent: bright red and fully opaque
+        if(cutSet.has(key1) || cutSet.has(key2)){
+            edgeObj.material.transparent = false;
+            edgeObj.material.opacity = 1.0;
+            edgeObj.material.color.set(0xff0000);
+        } else {
+            // non-cut edges remain slightly translucent to emphasize the cut
+            edgeObj.material.transparent = true;
+            edgeObj.material.opacity = 0.35;
+            edgeObj.material.color.set(
+                edgeObj.userData.type === "bubble"
+                    ? 0x22c55e
+                    : 0x14b8a6
+            );
+        }
+    });
+
+    const details = [
+        "Cut edges : " + formatEdgeSet(cutEdges),
+        "Result : disconnected"
+    ];
+
+    const summary = useMinimumCut ? "Status : Minimum lNB cut applied" : "Status : Edge failure applied";
+
+    setStatus(summary,details);
+}
+
+function animate(){
+
+    requestAnimationFrame(animate);
+
+    currentRotationY +=
+        (targetRotationY-currentRotationY)*0.05;
+
+    currentRotationX +=
+        (targetRotationX-currentRotationX)*0.05;
+
+    scene.rotation.y = currentRotationY;
+    scene.rotation.x = currentRotationX;
+
+    renderer.render(scene,camera);
+}
+
+window.addEventListener("resize",()=>{
+
+    camera.aspect =
+        window.innerWidth/window.innerHeight;
+
+    camera.updateProjectionMatrix();
+
+    renderer.setSize(
+        window.innerWidth,
+        window.innerHeight
+    );
+
+});
+
+</script>
+
+</body>
+</html>
