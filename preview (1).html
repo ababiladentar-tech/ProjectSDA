@@ -101,8 +101,8 @@ button{
     <p>
         Interactive visualization for Bubble-Sort Star Graph BSn.
         Input graph dimension n (recommended 2-6).
-        Click a node to choose the target, then press Simulate Failure.
-        The attack removes edges among neighbors of the target node.
+        Click a node to choose the target, then press a simulation button.
+        Vertex attack removes target-specific faulty nodes; edge attack removes one outgoing edge from each target neighbor.
     </p>
 
     <input type="number" id="nodeInput" value="4" min="2" max="6">
@@ -112,11 +112,11 @@ button{
     </button>
 
     <button class="fail" onclick="simulateFailure()">
-        Simulate Attack
+        Simulate Vertex Attack
     </button>
 
     <button class="fail" onclick="applyMinimumEdgeCut()">
-        Apply Minimum Edge Cut
+        Simulate Edge Attack
     </button>
 
     <button class="restore" onclick="restoreGraph()">
@@ -145,6 +145,7 @@ let graphData = null;
 let lastFailure = null;
 let selectedItem = null;
 
+const API_BASE_URL = "http://localhost:5000";
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
@@ -322,69 +323,46 @@ function buildGraph(){
 
 function buildBSnData(n){
 
-    const vertices =
-        generatePermutations(
-            Array.from({length:n},(_,index)=>index + 1)
-        );
-
-    const vertexIndex =
-        new Map(
-            vertices.map((vertex,index)=>[
-                vertex.join(","),
-                index
-            ])
-        );
-
-    const adjacency =
-        Array.from(
-            {length:vertices.length},
-            ()=>new Set()
-        );
-
-    const edgeMap = new Map();
-
-    function addEdge(a,b,type){
-
-        const left = Math.min(a,b);
-        const right = Math.max(a,b);
-        const key = left + "-" + right;
-
-        if(edgeMap.has(key)){
-            return;
+    let data = null;
+    let xmlhttp = new XMLHttpRequest();
+    
+    xmlhttp.onreadystatechange = function(){
+        if(this.readyState === 4 && this.status === 200){
+            data = JSON.parse(this.responseText);
         }
-
-        adjacency[a].add(b);
-        adjacency[b].add(a);
-
-        edgeMap.set(key,{
-            a:left,
-            b:right,
-            type
-        });
+    };
+    
+    xmlhttp.open("GET", `${API_BASE_URL}/api/graph/${n}`, false);
+    
+    try {
+        xmlhttp.send();
+    } catch(e) {
+        console.error("Cannot connect to backend. Make sure Flask server is running.");
+        return null;
     }
-
-    vertices.forEach((vertex,index)=>{
-
-        for(let i=1;i<n-1;i++){
-            const swapped =
-                applyTransposition(vertex,i,i+1);
-
-            addEdge(
-                index,
-                vertexIndex.get(swapped.join(",")),
-                "bubble"
-            );
-        }
-
-        for(let i=1;i<n;i++){
-            const swapped =
-                applyTransposition(vertex,0,i);
-
-            addEdge(
-                index,
-                vertexIndex.get(swapped.join(",")),
-                "star"
-            );
+    
+    if(!data || !data.vertices){
+        console.error("Failed to fetch graph data from backend");
+        return null;
+    }
+    
+    const vertices = data.vertices;
+    const vertexIndex = new Map(
+        vertices.map((vertex, index) => [
+            vertex.join(","),
+            index
+        ])
+    );
+    
+    const adjacency = data.adjacency.map(a => new Set(a));
+    
+    const edgeMap = new Map();
+    data.edges.forEach((edge) => {
+        const left = Math.min(edge.a, edge.b);
+        const right = Math.max(edge.a, edge.b);
+        const key = left + "-" + right;
+        if(!edgeMap.has(key)){
+            edgeMap.set(key, {a: left, b: right, type: "combined"});
         }
     });
 
@@ -393,13 +371,13 @@ function buildBSnData(n){
         vertices,
         vertexIndex,
         adjacency,
-        edges:[...edgeMap.values()],
-        vertexCount:vertices.length,
-        edgeCount:edgeMap.size,
-        degree:(2 * n) - 3,
-        classicalConnectivity:(2 * n) - 3,
-        theoreticalKappaNB:Math.floor((3 * n - 2) / 4),
-        theoreticalLambdaNB:(2 * n) - 3
+        edges: [...edgeMap.values()],
+        vertexCount: data.vertex_count,
+        edgeCount: data.edge_count,
+        degree: data.degree,
+        classicalConnectivity: data.degree,
+        theoreticalKappaNB: data.theoretical_kappa_nb,
+        theoreticalLambdaNB: data.theoretical_lambda_nb
     };
 }
 
@@ -409,78 +387,28 @@ function buildTheoremCutSet(data){
         return null;
     }
 
-    const x =
-        Array.from({length:data.n},(_,index)=>index + 1);
-
-    const cutSet = [];
-    const seen = new Set();
-
-    function addVertexFromOps(operations){
-
-        let vertex = x.slice();
-
-        operations.forEach(([left,right])=>{
-            vertex = applyTransposition(
-                vertex,
-                left - 1,
-                right - 1
-            );
-        });
-
-        const key = vertex.join(",");
-
-        if(seen.has(key)){
-            return;
+    let result = null;
+    let xmlhttp = new XMLHttpRequest();
+    
+    xmlhttp.onreadystatechange = function(){
+        if(this.readyState === 4 && this.status === 200){
+            result = JSON.parse(this.responseText);
         }
-
-        seen.add(key);
-        cutSet.push(data.vertexIndex.get(key));
+    };
+    
+    xmlhttp.open("GET", `${API_BASE_URL}/api/theorem-cut/${data.n}`, false);
+    
+    try {
+        xmlhttp.send();
+    } catch(e) {
+        return null;
     }
-
-    for(let i=2;i<=data.n - 1;i+=2){
-        addVertexFromOps([
-            [1,i],
-            [1,i + 1]
-        ]);
+    
+    if(!result || result.error){
+        return null;
     }
-
-    let pairEnd;
-
-    switch(data.n % 4){
-        case 0:
-            pairEnd = data.n - 5;
-            break;
-        case 1:
-            pairEnd = data.n - 6;
-            break;
-        case 2:
-            pairEnd = data.n - 3;
-            break;
-        default:
-            pairEnd = data.n - 4;
-            break;
-    }
-
-    for(let start=3;start<=pairEnd;start+=4){
-        addVertexFromOps([
-            [start,start + 1],
-            [start + 2,start + 3]
-        ]);
-    }
-
-    if(data.n % 4 === 0 || data.n % 4 === 2){
-        addVertexFromOps([
-            [1,data.n],
-            [data.n - 1,data.n]
-        ]);
-    }else if(data.n % 4 === 1){
-        addVertexFromOps([
-            [data.n - 2,data.n - 1],
-            [data.n - 1,data.n]
-        ]);
-    }
-
-    return cutSet;
+    
+    return result.cut_set;
 }
 
 function createNodeLabel(text,totalNodes){
@@ -609,49 +537,38 @@ function connectNodes(a,b,type){
 
 function computeKappaNB(data){
 
-    const vertices =
-        Array.from(
-            {length:data.vertexCount},
-            (_,index)=>index
-        );
-
-    for(let k=1;k<=data.theoreticalKappaNB;k++){
-
-        let found = null;
-
-        forEachCombination(vertices,k,(subset)=>{
-
-            const removed =
-                getClosedNeighborhood(data.adjacency,subset);
-
-            const remaining =
-                vertices.filter(
-                    (index)=>!removed.has(index)
-                );
-
-            const analysis =
-                analyzeRemainingGraph(data.adjacency,remaining);
-
-            if(analysis.ok){
-                found = {
-                    k,
-                    cutSet:subset.slice(),
-                    removed,
-                    remaining,
-                    reason:analysis.reason
-                };
-                return true;
-            }
-
-            return false;
-        });
-
-        if(found){
-            return found;
-        }
+    if(data.n > 5){
+        return null;
     }
 
-    return null;
+    let result = null;
+    let xmlhttp = new XMLHttpRequest();
+    
+    xmlhttp.onreadystatechange = function(){
+        if(this.readyState === 4 && this.status === 200){
+            result = JSON.parse(this.responseText);
+        }
+    };
+    
+    xmlhttp.open("GET", `${API_BASE_URL}/api/exact-kappa/${data.n}`, false);
+    
+    try {
+        xmlhttp.send();
+    } catch(e) {
+        return null;
+    }
+    
+    if(!result || result.error){
+        return null;
+    }
+    
+    return {
+        k: result.k,
+        cutSet: result.cut_set,
+        removed: new Set(result.removed),
+        remaining: result.remaining,
+        reason: result.reason
+    };
 }
 
 // Compute exact edge connectivity (lambda) by brute force for small n (<=5)
@@ -661,45 +578,32 @@ function computeLambdaNB(data){
         return null;
     }
 
-    const vertices = Array.from({length:data.vertexCount},(_,i)=>i);
-
-    // edges are objects {a,b,type} in data.edges
-    const edges = data.edges.map(e=>[e.a,e.b]);
-
-    for(let k=1;k<=data.theoreticalLambdaNB;k++){
-
-        let found = null;
-
-        forEachCombination(edges,k,(subset)=>{
-
-            // clone adjacency
-            const newAdj = data.adjacency.map(s=>new Set(s));
-
-            subset.forEach(([a,b])=>{
-                newAdj[a].delete(b);
-                newAdj[b].delete(a);
-            });
-
-            const analysis = analyzeRemainingGraph(newAdj,vertices);
-
-            if(analysis.ok){
-                found = {
-                    k,
-                    cutEdges: subset.map(e=>[e[0],e[1]]),
-                    reason: analysis.reason
-                };
-                return true;
-            }
-
-            return false;
-        });
-
-        if(found){
-            return found;
+    let result = null;
+    let xmlhttp = new XMLHttpRequest();
+    
+    xmlhttp.onreadystatechange = function(){
+        if(this.readyState === 4 && this.status === 200){
+            result = JSON.parse(this.responseText);
         }
+    };
+    
+    xmlhttp.open("GET", `${API_BASE_URL}/api/exact-lambda/${data.n}`, false);
+    
+    try {
+        xmlhttp.send();
+    } catch(e) {
+        return null;
     }
-
-    return null;
+    
+    if(!result || result.error){
+        return null;
+    }
+    
+    return {
+        k: result.k,
+        cutEdges: result.cut_edges,
+        reason: result.reason
+    };
 }
 
 function forEachCombination(values,size,callback){
@@ -839,95 +743,66 @@ function getIsolatedVertices(adjacency,remaining){
     });
 }
 
-function simulateFailure(){
+function fetchJsonSync(url){
+    const xhr = new XMLHttpRequest();
+    const fullUrl = url.startsWith("http") ? url : API_BASE_URL + url;
+    xhr.open("GET", fullUrl, false);
+    try {
+        xhr.send();
+    } catch (e) {
+        console.error("Failed to fetch", fullUrl, e);
+        return null;
+    }
+    if(xhr.status !== 200){
+        console.error("Request failed", fullUrl, xhr.status, xhr.responseText);
+        return null;
+    }
+    return JSON.parse(xhr.responseText);
+}
 
+function simulateFailure(){
     if(!graphData || nodes.length === 0){
         return;
     }
 
-    if(selectedItem){
-        if(selectedItem.type === "edge"){
-            setStatus(
-                "Status : Pilih node target terlebih dahulu",
-                [
-                    "Serangan edge dijalankan pada edge antar tetangga node target, bukan pada satu edge langsung."
-                ]
-            );
-            return;
-        }
-
-        if(selectedItem.type === "node"){
-            applyNeighborhoodEdgeFailure(selectedItem.index);
-            return;
-        }
-    }
-
-    setStatus(
-        "Status : Pilih node target dulu",
-        ["Klik sebuah node di graf lalu tekan Simulate Failure."]
-    );
-}
-
-function getNeighborEdges(nodeIndex){
-    const neighbors = Array.from(graphData.adjacency[nodeIndex]);
-    const cutEdges = [];
-    const endpoints = new Set();
-    const seen = new Set();
-
-    neighbors.forEach((neighbor)=>{
-        graphData.adjacency[neighbor].forEach((connected)=>{
-            if(connected === nodeIndex){
-                return;
-            }
-
-            const [a,b] = neighbor < connected ? [neighbor, connected] : [connected, neighbor];
-            const key = a + ":" + b;
-            if(seen.has(key)){
-                return;
-            }
-
-            seen.add(key);
-            cutEdges.push([a,b]);
-            endpoints.add(neighbor);
-            endpoints.add(connected);
-        });
-    });
-
-    return {
-        cutEdges,
-        endpoints: Array.from(endpoints),
-    };
-}
-
-function applyNeighborhoodEdgeFailure(nodeIndex){
-    const neighborData = getNeighborEdges(nodeIndex);
-
-    if(neighborData.cutEdges.length === 0){
+    if(!selectedItem || selectedItem.type !== "node"){
         setStatus(
-            "Status : Tidak ada edge antar tetangga target",
-            [
-                "Node target memiliki tetangga, tetapi tidak ada edge di antara tetangga tersebut."
-            ]
+            "Status : Pilih node target dulu",
+            ["Klik sebuah node di graf lalu tekan Simulate Attack."]
         );
         return;
     }
 
-    const target = nodeIndex;
-    const removedNodes = new Set(neighborData.endpoints);
-    const remainingNodes = Array.from({length: graphData.vertexCount}, (_, index) => index).filter(
-        (index) => !removedNodes.has(index)
-    );
-    const remainingSet = new Set(remainingNodes);
-    const remainingEdges = edges.filter((edgeObj) =>
-        remainingSet.has(edgeObj.userData.a) && remainingSet.has(edgeObj.userData.b)
-    ).length;
-    const residualAnalysis = analyzeRemainingGraph(graphData.adjacency, remainingNodes);
+    const target = selectedItem.index;
+    const result = fetchJsonSync(`/api/vertex-subversion/${graphData.n}?target=${target}`);
+
+    if(!result || result.error){
+        setStatus(
+            "Status : Attack gagal",
+            [result ? result.error : "Tidak dapat menjalankan vertex attack"]
+        );
+        return;
+    }
+
+    visualizeVertexAttack(result);
+}
+
+function visualizeVertexAttack(result){
+    const target = result.target;
+    const attackerNodes = new Set(result.faulty_nodes);
+    const removedNodes = new Set(result.removed_nodes);
 
     nodes.forEach((node,index)=>{
         node.material.transparent = false;
         node.material.opacity = 1;
 
         if(index === target){
+            node.material.color.set(0xfacc15);
+            node.material.emissive.set(0xb45309);
+            return;
+        }
+
+        if(attackerNodes.has(index)){
             node.material.color.set(0xef4444);
             node.material.emissive.set(0x7f1d1d);
             return;
@@ -943,21 +818,104 @@ function applyNeighborhoodEdgeFailure(nodeIndex){
         node.material.emissive.set(0x1e40af);
     });
 
-    const cutSet = new Set(neighborData.cutEdges.map((e) => e[0] + ":" + e[1]));
+    edges.forEach((edgeObj)=>{
+        const a = edgeObj.userData.a;
+        const b = edgeObj.userData.b;
+        const hidden = removedNodes.has(a) || removedNodes.has(b);
+
+        if(hidden){
+            edgeObj.material.transparent = true;
+            edgeObj.material.opacity = 0.12;
+            edgeObj.material.color.set(0xf97316);
+        } else {
+            edgeObj.material.transparent = true;
+            edgeObj.material.opacity = 0.35;
+            edgeObj.material.color.set(
+                edgeObj.userData.type === "bubble"
+                    ? 0x22c55e
+                    : 0x14b8a6
+            );
+        }
+    });
+
+    setStatus(
+        "Status : Vertex attack complete",
+        [
+            "Target node : " + formatPermutation(graphData.vertices[target]),
+            "Faulty nodes : " + formatSeedSet(result.faulty_nodes),
+            "Removed nodes : " + formatSeedSet(result.removed_nodes),
+            "Remaining nodes : " + result.remaining_nodes.length,
+            "Residual connectivity : " + result.result
+        ]
+    );
+}
+
+function applyMinimumEdgeCut(){
+    if(!graphData){
+        return;
+    }
+
+    if(!selectedItem || selectedItem.type !== "node"){
+        setStatus(
+            "Status : Pilih node target dulu",
+            ["Klik sebuah node di graf lalu tekan Apply Minimum Edge Cut untuk edge attack."]
+        );
+        return;
+    }
+
+    const target = selectedItem.index;
+    const result = fetchJsonSync(`/api/edge-subversion/${graphData.n}?target=${target}`);
+
+    if(!result || result.error){
+        setStatus(
+            "Status : Edge attack gagal",
+            [result ? result.error : "Tidak dapat menjalankan edge attack"]
+        );
+        return;
+    }
+
+    visualizeEdgeAttack(result);
+}
+
+function visualizeEdgeAttack(result){
+    const target = result.target;
+    const removedNodes = new Set(result.attacked_nodes);
+    const attackedEdges = new Set(result.attacked_edges.map(([a,b]) => `${a}:${b}`));
+
+    nodes.forEach((node,index)=>{
+        node.material.transparent = false;
+        node.material.opacity = 1;
+
+        if(index === target){
+            node.material.color.set(0xfacc15);
+            node.material.emissive.set(0xb45309);
+            return;
+        }
+
+        if(removedNodes.has(index)){
+            node.material.color.set(0xf97316);
+            node.material.emissive.set(0x7c2d12);
+            return;
+        }
+
+        node.material.color.set(0x3b82f6);
+        node.material.emissive.set(0x1e40af);
+    });
 
     edges.forEach((edgeObj)=>{
         const a = edgeObj.userData.a;
         const b = edgeObj.userData.b;
-        const key = a + ":" + b;
+        const key = `${a}:${b}`;
+        const hidden = removedNodes.has(a) || removedNodes.has(b);
 
-        if(cutSet.has(key)){
+        if(attackedEdges.has(key)){
             edgeObj.material.transparent = false;
             edgeObj.material.opacity = 1.0;
             edgeObj.material.color.set(0xff0000);
             return;
         }
 
-        if(removedNodes.has(a) || removedNodes.has(b)){
+        if(hidden){
             edgeObj.material.transparent = true;
             edgeObj.material.opacity = 0.12;
             edgeObj.material.color.set(0xf97316);
@@ -974,14 +932,13 @@ function applyNeighborhoodEdgeFailure(nodeIndex){
     });
 
     setStatus(
-        "Status : Attack complete",
+        "Status : Edge attack complete",
         [
             "Target node : " + formatPermutation(graphData.vertices[target]),
-            "Attacked edges : " + formatEdgeSet(neighborData.cutEdges),
-            "Removed nodes : " + formatSeedSet(Array.from(removedNodes)),
-            "Remaining nodes : " + remainingNodes.length,
-            "Remaining edges : " + remainingEdges,
-            "Residual connectivity : " + residualAnalysis
+            "Attacked edges : " + formatEdgeSet(result.attacked_edges),
+            "Removed nodes : " + formatSeedSet(result.attacked_nodes),
+            "Remaining nodes : " + result.remaining_nodes.length,
+            "Residual connectivity : " + result.result
         ]
     );
 }
@@ -1393,80 +1350,6 @@ function formatEdgeSet(edgeSet){
     }).join(", ");
 }
 
-function applyMinimumEdgeCut(){
-    if(!graphData){
-        return;
-    }
-
-    if(graphData.bruteForceEdgeResult){
-        applyEdgeFailure(graphData.bruteForceEdgeResult.cutEdges,true);
-        return;
-    }
-
-    setStatus("Status : Minimum edge cut not available",["Exact edge-cut enabled only up to n = 5"]);
-}
-
-function applyEdgeFailure(cutEdges,useMinimumCut){
-    if(!graphData){
-        return;
-    }
-
-    const endpoints = new Set();
-    const cutSet = new Set();
-
-    cutEdges.forEach(([a,b])=>{
-        endpoints.add(a);
-        endpoints.add(b);
-        cutSet.add(a + ":" + b);
-        cutSet.add(b + ":" + a);
-    });
-
-    nodes.forEach((node,index)=>{
-        if(endpoints.has(index)){
-            node.material.color.set(0xfacc15);
-            node.material.emissive.set(0xb45309);
-            node.material.opacity = 1;
-            node.material.transparent = false;
-            return;
-        }
-
-        node.material.color.set(0x3b82f6);
-        node.material.emissive.set(0x1e40af);
-        node.material.opacity = 1;
-        node.material.transparent = false;
-    });
-
-    edges.forEach((edgeObj)=>{
-        const a = edgeObj.userData.a;
-        const b = edgeObj.userData.b;
-        const key = a + ":" + b;
-
-        if(cutSet.has(key)){
-            edgeObj.material.transparent = false;
-            edgeObj.material.opacity = 1.0;
-            edgeObj.material.color.set(0xff0000);
-            return;
-        }
-
-        edgeObj.material.transparent = true;
-        edgeObj.material.opacity = 0.35;
-        edgeObj.material.color.set(
-            edgeObj.userData.type === "bubble"
-                ? 0x22c55e
-                : 0x14b8a6
-        );
-    });
-
-    const details = [
-        "Cut edges : " + formatEdgeSet(cutEdges),
-        "Impacted nodes : " + formatSeedSet([...endpoints]),
-        "Result : edge failure"
-    ];
-
-    const summary = useMinimumCut ? "Status : Minimum lNB cut applied" : "Status : Edge failure applied";
-
-    setStatus(summary,details);
-}
 
 function animate(){
 
