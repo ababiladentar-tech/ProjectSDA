@@ -210,8 +210,7 @@ def exact_kappa_nb(graph: Dict[str, object], max_n: int = 5) -> Dict[str, object
 def exact_lambda_nb(graph: Dict[str, object], max_n: int = 5) -> Dict[str, object] | None:
     """Menghitung edge connectivity (lambda) secara eksak.
 
-    Fungsi ini mencoba semua kombinasi edge hingga menemukan satu set
-    edge dengan ukuran k yang membuat graf terputus (disconnected).
+    Fungsi ini mencoba semua kombinasi edge hingga menemukan satu set edge dengan ukuran k yang membuat graf terputus (disconnected).
     Hanya cocok untuk graf kecil (n <= max_n) karena kompleksitas kombinatorial.
     """
     n = int(graph["n"])
@@ -281,7 +280,7 @@ def cari_node_penyerang_otomatis(n: int, graph: Dict[str, object], target_index:
     else:
         base = graph["vertices"][target_index]
 
-    vertex_index: Dict[Vertex, int] = graph["vertex_index"]  # type: ignore[assignment]
+    vertex_index: Dict[Vertex, int] = graph["vertex_index"]
     
     A = []
     B = []
@@ -487,14 +486,14 @@ def graph_summary(n: int) -> Dict[str, object]:
         "kappa_nb_theorem": graph["theoretical_kappa_nb"],
         "lambda_nb_theorem": graph["theoretical_lambda_nb"],
         "theorem_cut_size": len(theorem_cut),
-        "theorem_cut_vertices": [graph["vertices"][index] for index in theorem_cut],  # type: ignore[index]
+        "theorem_cut_vertices": [graph["vertices"][index] for index in theorem_cut],
         "theorem_subversion_result": theorem_reason,
         "exact_kappa_nb": None
         if exact is None
         else {
             "k": exact["k"],
             "reason": exact["reason"],
-            "cut_vertices": [graph["vertices"][index] for index in exact["cut_set"]],  # type: ignore[index]
+            "cut_vertices": [graph["vertices"][index] for index in exact["cut_set"]],
         },
         "exact_lambda_nb": None
         if exact_lambda is None
@@ -540,16 +539,15 @@ def simulate_bsn_subversion(n: int) -> None:
     print(f"  - Theoretical Kappa (κ): {graph['theoretical_kappa_nb']}")
     print(f"  - Theoretical Lambda (λ): {graph['theoretical_lambda_nb']}")
     
-    # Simulasi Vertex Subversion (seperti nodes.py)
     print(f"\n{'-'*60}")
     print("VERTEX SUBVERSION SIMULATION (dari nodes.py)")
     print(f"{'-'*60}")
     
     node_penyerang = cari_node_penyerang_otomatis(n, graph)
     nodes_terhapus = subversi_vertex(graph, node_penyerang)
-    remaining_vertex = [i for i in range(int(graph["vertex_count"])) if i not in nodes_terhapus]
+    remaining_vertex = [i for i in range(int(graph['vertex_count'])) if i not in nodes_terhapus]
     
-    adjacency: List[Set[int]] = graph["adjacency"]  # type: ignore[assignment]
+    adjacency: List[Set[int]] = graph['adjacency']
     vertex_result = analyze_remaining_graph(adjacency, remaining_vertex)
     
     print(f"Attacker Nodes: {len(node_penyerang)}")
@@ -558,7 +556,6 @@ def simulate_bsn_subversion(n: int) -> None:
     print(f"Graph Status: {vertex_result}")
     print(f"Graph Connected: {vertex_result != 'disconnected' and vertex_result != 'empty'}")
     
-    # Simulasi Edge Subversion (seperti edges.py)
     print(f"\n{'-'*60}")
     print("EDGE SUBVERSION SIMULATION (dari edges.py)")
     print(f"{'-'*60}")
@@ -568,11 +565,11 @@ def simulate_bsn_subversion(n: int) -> None:
     for neighbor in adjacency[target_node]:
         neighbor_edges.append((target_node, neighbor))
     
-    max_edges = int(graph["theoretical_lambda_nb"])
+    max_edges = int(graph['theoretical_lambda_nb'])
     edges_target = neighbor_edges[:max_edges]
     
     nodes_terserang, edges_kedampak = simulasi_edge_subversion_murni(graph, edges_target)
-    remaining_edge = [i for i in range(int(graph["vertex_count"])) if i not in nodes_terserang]
+    remaining_edge = [i for i in range(int(graph['vertex_count'])) if i not in nodes_terserang]
     edge_result = analyze_remaining_graph(adjacency, remaining_edge)
     
     print(f"Target Edges Attacked: {len(edges_target)}")
@@ -582,14 +579,13 @@ def simulate_bsn_subversion(n: int) -> None:
     print(f"Graph Status: {edge_result}")
     print(f"Graph Connected: {edge_result != 'disconnected' and edge_result != 'empty'}")
     
-    # Teorema Cut Set (dari theorem)
     print(f"\n{'-'*60}")
     print("THEOREM-BASED CUT SET ANALYSIS")
     print(f"{'-'*60}")
     
     theorem_cut = theorem_cut_set(graph)
     removed_theorem = closed_neighborhood(adjacency, theorem_cut)
-    remaining_theorem = [i for i in range(int(graph["vertex_count"])) if i not in removed_theorem]
+    remaining_theorem = [i for i in range(int(graph['vertex_count'])) if i not in removed_theorem]
     theorem_result = analyze_remaining_graph(adjacency, remaining_theorem)
     
     print(f"Theorem Cut Set Size: {len(theorem_cut)}")
