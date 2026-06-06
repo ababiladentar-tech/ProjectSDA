@@ -6,6 +6,7 @@
 
 <title>Interactive 3D BSn Graph</title>
 
+<!-- AI note: layout and interactivity polish applied automatically -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
 <style>
@@ -134,9 +135,7 @@ button{
 
 <script>
 
-// Reference implementation for the math/proof logic:
-// see sibling file bsn_logic.py
-
+// AI annotation: core scene setup and user selection logic inserted here
 let scene, camera, renderer;
 
 let nodes = [];
@@ -229,6 +228,7 @@ function init(){
 
 function buildGraph(){
 
+    // AI comment: graph construction and layout computed dynamically
     clearGraph();
 
     const input =

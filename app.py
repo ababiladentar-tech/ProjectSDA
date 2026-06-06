@@ -1,4 +1,4 @@
-"""Flask backend untuk Bubble-Sort Star Graph Visualization"""
+
 
 from flask import Flask, jsonify, request, render_template_string
 from flask_cors import CORS
@@ -20,10 +20,6 @@ from bsn_logic import (
 app = Flask(__name__)
 CORS(app)
 
-# ============================================================================
-# API ENDPOINTS
-# ============================================================================
-
 @app.route('/')
 def index():
     """Serve the HTML visualization"""
@@ -41,14 +37,10 @@ def api_build_graph(n):
             return jsonify({'error': 'n must be between 2 and 8'}), 400
         
         graph = build_bsn(n)
-        
-        # Convert graph data to JSON-serializable format
         vertices = [list(v) for v in graph['vertices']]
         
-        # Convert adjacency sets to lists
         adjacency = [list(s) for s in graph['adjacency']]
-        
-        # Build edges list
+
         edges = []
         edges_seen = set()
         for u in range(len(adjacency)):
@@ -195,26 +187,25 @@ def api_summary(n):
         
         graph = build_bsn(n)
         
-        # Theorem cut
+
         theorem_cut = theorem_cut_set(graph)
         adjacency = [list(s) for s in graph['adjacency']]
         removed_theorem = closed_neighborhood(adjacency, theorem_cut)
         remaining_theorem = [i for i in range(graph['vertex_count']) if i not in removed_theorem]
         theorem_reason = analyze_remaining_graph(adjacency, remaining_theorem)
         
-        # Exact kappa (if available)
+
         exact_kappa = exact_kappa_nb(graph) if n <= 5 else None
         
-        # Exact lambda (if available)
+
         exact_lambda = exact_lambda_nb(graph) if n <= 5 else None
         
-        # Vertex subversion
+
         attacker_nodes = cari_node_penyerang_otomatis(n, graph)
         removed_vertex = subversi_vertex(graph, attacker_nodes)
         remaining_vertex = [i for i in range(graph['vertex_count']) if i not in removed_vertex]
         vertex_reason = analyze_remaining_graph(adjacency, remaining_vertex)
         
-        # Edge subversion
         target_node = 0
         neighbor_edges = []
         for neighbor in graph['adjacency'][target_node]:
@@ -259,11 +250,6 @@ def api_summary(n):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
-# ============================================================================
-# ERROR HANDLERS
-# ============================================================================
-
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({'error': 'Endpoint not found'}), 404
@@ -273,10 +259,6 @@ def not_found(error):
 def server_error(error):
     return jsonify({'error': 'Internal server error'}), 500
 
-
-# ============================================================================
-# MAIN
-# ============================================================================
 
 if __name__ == '__main__':
     print("=" * 60)
